@@ -1,6 +1,8 @@
 use std::net::UdpSocket;
 
-use rdns::{DnsQuery, EncodeBinary, CLASS_IN};
+use rdns::{
+    view::View, DecodeBinary, DnsHeader, DnsQuery, DnsQuestion, DnsRecord, EncodeBinary, CLASS_IN,
+};
 
 fn main() {
     let socket = UdpSocket::bind("0.0.0.0:6679").unwrap();
@@ -11,10 +13,22 @@ fn main() {
     let sent = socket.send_to(query.as_slice(), "8.8.8.8:53").unwrap();
     println!("Sent {sent} bytes:\n{:?}", query);
 
-    let mut buf = [0u8; 1024];
-    let received = socket.recv(&mut buf).unwrap();
+    let mut buffer = [0u8; 1024];
+    let received = socket.recv(&mut buffer).unwrap();
+    println!("Received {received} bytes:\n{:?}", &buffer[..received]);
 
-    println!("Received {received} bytes:\n{:?}", &buf[..received]);
+    let mut view = View::new(&buffer[..received]);
+
+    let header = DnsHeader::decode(&mut view);
+    dbg!(header);
+
+    let question = DnsQuestion::decode(&mut view);
+    dbg!(question);
+
+    let record = DnsRecord::decode(&mut view);
+    dbg!(record);
+
+    assert!(view.is_at_end());
 }
 
 fn to_hex(bytes: &[u8]) -> String {

@@ -1,4 +1,10 @@
+use core::panic;
+use std::{mem, usize};
+
 use rand::Rng;
+use view::View;
+
+pub mod view;
 
 pub const TYPE_A: u16 = 1;
 pub const CLASS_IN: u16 = 1;
@@ -9,7 +15,7 @@ pub trait EncodeBinary {
 }
 
 pub trait DecodeBinary {
-    fn decode(bytes: &[u8]) -> Self;
+    fn decode(bytes: &mut View) -> Self;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,7 +62,7 @@ pub struct DnsHeader {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DnsQuestion {
-    name: Vec<u8>,
+    name: String,
     type_: u16,
     class: u16,
 }
@@ -64,23 +70,10 @@ pub struct DnsQuestion {
 impl DnsQuestion {
     pub fn new(dns_name: &str, type_: u16, class: u16) -> Self {
         Self {
-            name: Self::encode_dns_name(dns_name),
+            name: dns_name.to_owned(),
             type_,
             class,
         }
-    }
-
-    fn encode_dns_name(name: &str) -> Vec<u8> {
-        name.split('.')
-            .chain([""]) // for the final terminating zero
-            .map(|part| {
-                let bytes = part.as_bytes();
-                let mut encoded = vec![bytes.len() as u8];
-                encoded.extend(bytes);
-                encoded
-            })
-            .flatten()
-            .collect()
     }
 }
 
@@ -100,17 +93,19 @@ impl EncodeBinary for DnsHeader {
     }
 }
 impl DecodeBinary for DnsHeader {
-    fn decode(bytes: &[u8]) -> Self {
-        assert_eq!(bytes.len(), 12);
+    fn decode(view: &mut View) -> Self {
+        if view.remaining() < mem::size_of::<Self>() {
+            panic!("expected exactly {} bytes", mem::size_of::<Self>());
+        }
 
         // NOTE: The unwraps are safe because the length of `bytes` has been checked
         // by the above assert.
-        let id = u16::from_be_bytes(bytes[0..2].try_into().unwrap());
-        let flags = u16::from_be_bytes(bytes[2..4].try_into().unwrap());
-        let num_questions = u16::from_be_bytes(bytes[4..6].try_into().unwrap());
-        let num_answers = u16::from_be_bytes(bytes[6..8].try_into().unwrap());
-        let num_authorities = u16::from_be_bytes(bytes[8..10].try_into().unwrap());
-        let num_additionals = u16::from_be_bytes(bytes[10..12].try_into().unwrap());
+        let id = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
+        let flags = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
+        let num_questions = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
+        let num_answers = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
+        let num_authorities = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
+        let num_additionals = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
 
         Self {
             id,
@@ -129,29 +124,123 @@ impl EncodeBinary for DnsQuestion {
             .into_iter()
             .flatten();
 
-        self.name.iter().copied().chain(bytes).collect()
+        encode_dns_name(self.name.as_str())
+            .iter()
+            .copied()
+            .chain(bytes)
+            .collect()
     }
 }
 
 impl DecodeBinary for DnsQuestion {
-    fn decode(bytes: &[u8]) -> Self {
-        let bytes_len = bytes.len();
-
-        assert!(bytes_len > 4);
-
-        // Decode the bytes starting from the rear and what ever is left will be shoved into the
-        // `name` field. It is asserted that there wil be at least enought bytes to fill both the
-        // `type_` and `class` fields, however, it is possible for the `name` field to be have 0
-        // length
-        // NOTE: The unwraps are safe because the length of `bytes` has been checked
-        // by the above assert.
-        let type_ = u16::from_be_bytes(bytes[bytes_len - 4..bytes_len - 2].try_into().unwrap());
-        let class = u16::from_be_bytes(bytes[bytes_len - 2..].try_into().unwrap());
-
-        let name = bytes[..bytes_len - 4].to_vec();
+    fn decode(view: &mut View) -> Self {
+        let name = String::from_utf8_lossy(&decode_dns_name(view)).to_string();
+        let type_ = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
+        let class = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
 
         Self { name, type_, class }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DnsRecord {
+    name: String,
+    type_: u16,
+    class: u16,
+    ttl: u32,
+    data: Vec<u8>,
+}
+
+impl DecodeBinary for DnsRecord {
+    fn decode(view: &mut View) -> Self {
+        let name = String::from_utf8_lossy(&decode_dns_name(view)).to_string();
+
+        let type_ = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
+        let class = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
+        let ttl = u32::from_be_bytes(view.read_n_bytes(4).try_into().unwrap());
+
+        let data_len = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap()) as usize;
+        let data = view.read_n_bytes_owned(data_len);
+
+        assert_eq!(
+            data_len,
+            data.len(),
+            "missing {} bytes of data",
+            data_len - data.len()
+        );
+
+        Self {
+            name,
+            type_,
+            class,
+            ttl,
+            data,
+        }
+    }
+}
+fn encode_dns_name(name: &str) -> Vec<u8> {
+    name.split('.')
+        .chain([""]) // for the final terminating zero
+        .map(|part| {
+            let bytes = part.as_bytes();
+            let mut encoded = vec![bytes.len() as u8];
+            encoded.extend(bytes);
+            encoded
+        })
+        .flatten()
+        .collect()
+}
+
+/// Tries to decode a one or more dns names from its binary format. This function is aware of the
+/// DNS name compression scheme.
+///
+/// # Panics
+/// This function will panic if the given [View] doesn't contain the valid bytes to decode a sequence of one or more dns names.
+fn decode_dns_name(view: &mut View) -> Vec<u8> {
+    if view.remaining() <= 1 {
+        panic!("there must be at least one null terminating byte");
+    }
+
+    let mut parts = Vec::new();
+
+    let mut length = view.read_n_bytes(1)[0];
+    while length != 0 {
+        if is_pointer(length) {
+            // Zero out the first two bits and get the pointer by combining with the second octet
+            let pointer = u16::from_be_bytes([(length & 0b00111111), view.read_n_bytes(1)[0]]);
+            parts.extend(decode_compressed_dns_name(view, pointer as usize));
+            // Insert extra period anyway to satisfy the later exclusion
+            parts.push('.' as u8);
+            // Break immediately since no other labels can follow a pointer
+            break;
+        } else {
+            parts.extend(view.read_n_bytes_owned(length as usize));
+            // Re-insert period between domain name parts
+            parts.push('.' as u8);
+        };
+
+        length = view.read_n_bytes(1)[0];
+    }
+
+    // Exclude the last period that was inserted redundantly
+    parts.pop();
+
+    parts
+}
+
+#[inline]
+fn decode_compressed_dns_name(view: &mut View, pointer: usize) -> Vec<u8> {
+    let current = view.needle();
+    view.set_needle(pointer);
+    let name = decode_dns_name(view);
+    view.set_needle(current);
+    name
+}
+
+#[inline]
+fn is_pointer(double_octet: u8) -> bool {
+    // Check if first two bits are set in the leading octet
+    double_octet & 0b11000000 == 0b11000000
 }
 
 #[cfg(test)]
@@ -173,7 +262,7 @@ mod tests {
             num_additionals,
         };
 
-        let decoded_header = DnsHeader::decode(&header.encode());
+        let decoded_header = DnsHeader::decode(&mut View::new(&header.encode()));
 
         assert_eq!(header, decoded_header);
     }
@@ -181,22 +270,22 @@ mod tests {
     #[test]
     #[should_panic]
     fn can_panic_on_decoding_invalid_dns_header() {
-        let one_byte_short = rand::thread_rng().gen::<[u8; 23]>();
+        let one_byte_short = rand::thread_rng().gen::<[u8; 11]>();
 
-        DnsHeader::decode(&one_byte_short);
+        DnsHeader::decode(&mut View::new(&one_byte_short));
     }
 
     #[test]
     fn can_binary_encode_dns_question() {
-        let (name, type_, class) = rand::thread_rng().gen::<([u8; 20], u16, u16)>();
+        let (type_, class) = rand::thread_rng().gen::<(u16, u16)>();
 
         let question = DnsQuestion {
-            name: name.to_vec(),
+            name: "www.google.com".to_owned(),
             type_,
             class,
         };
 
-        let decoded_question = DnsQuestion::decode(&question.encode());
+        let decoded_question = DnsQuestion::decode(&mut View::new(&question.encode()));
 
         assert_eq!(question, decoded_question);
     }
@@ -206,13 +295,13 @@ mod tests {
     fn can_panic_on_decoding_invalid_dns_question() {
         let one_byte_short = rand::thread_rng().gen::<[u8; 3]>();
 
-        DnsQuestion::decode(&one_byte_short);
+        DnsQuestion::decode(&mut View::new(&one_byte_short));
     }
 
     #[test]
     fn can_encode_dns_name() {
         let dns_name = "www.google.com";
-        let encoded = DnsQuestion::encode_dns_name(dns_name);
+        let encoded = encode_dns_name(dns_name);
 
         let expected = vec![
             0x3, 0x77, 0x77, 0x77, 0x6, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x3, 0x63, 0x6f, 0x6d,
