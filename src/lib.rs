@@ -6,6 +6,9 @@ pub const RECURSION_DESIRED: u16 = 1 << 8;
 
 pub trait EncodeBinary {
     fn encode(&self) -> Vec<u8>;
+}
+
+pub trait DecodeBinary {
     fn decode(bytes: &[u8]) -> Self;
 }
 
@@ -38,10 +41,6 @@ impl EncodeBinary for DnsQuery {
         let question_encoded = self.question.encode().into_iter();
 
         header_encoded.chain(question_encoded).collect()
-    }
-
-    fn decode(_bytes: &[u8]) -> Self {
-        unimplemented!()
     }
 }
 
@@ -99,7 +98,8 @@ impl EncodeBinary for DnsHeader {
         .flatten()
         .collect::<Vec<u8>>()
     }
-
+}
+impl DecodeBinary for DnsHeader {
     fn decode(bytes: &[u8]) -> Self {
         assert_eq!(bytes.len(), 12);
 
@@ -131,7 +131,9 @@ impl EncodeBinary for DnsQuestion {
 
         self.name.iter().copied().chain(bytes).collect()
     }
+}
 
+impl DecodeBinary for DnsQuestion {
     fn decode(bytes: &[u8]) -> Self {
         let bytes_len = bytes.len();
 
