@@ -25,17 +25,17 @@ pub struct DnsQuery {
 }
 
 impl DnsQuery {
-    pub fn new(domain_name: &str) -> Self {
+    pub fn new(domain_name: &str, query_type: DnsQtype) -> Self {
         let header = DnsHeader {
             id: rand::thread_rng().gen(),
-            flags: RECURSION_DESIRED,
+            flags: 0,
             num_questions: 1,
             num_answers: 0,
             num_authorities: 0,
             num_additionals: 0,
         };
 
-        let question = DnsQuestion::new(domain_name, DnsQtype::A, DnsClass::IN);
+        let question = DnsQuestion::new(domain_name, query_type, DnsClass::IN);
 
         Self { header, question }
     }

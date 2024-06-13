@@ -3,7 +3,7 @@ use std::{
     net::{Ipv4Addr, UdpSocket},
 };
 
-use rdns::{view::View, DecodeBinary, DnsPacket, DnsQuery, EncodeBinary};
+use rdns::{view::View, DecodeBinary, DnsPacket, DnsQtype, DnsQuery, EncodeBinary};
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
@@ -17,6 +17,7 @@ fn main() {
 
     let response = lookup_domain(domain_name, "8.8.8.8:53", &socket);
 
+    #[cfg(debug_assertions)]
     dbg!(&response);
 
     println!(
@@ -28,7 +29,7 @@ fn main() {
 }
 
 fn lookup_domain(domain_name: &str, dns_server: &str, socket: &UdpSocket) -> DnsPacket {
-    let query = DnsQuery::new(domain_name).encode();
+    let query = DnsQuery::new(domain_name, DnsQtype::A).encode();
 
     let sent = socket.send_to(query.as_slice(), dns_server).unwrap();
     assert_eq!(
@@ -43,7 +44,5 @@ fn lookup_domain(domain_name: &str, dns_server: &str, socket: &UdpSocket) -> Dns
 
     let mut view = View::new(&buffer[..received]);
 
-    let packet = DnsPacket::decode(&mut view);
-
-    packet
+    DnsPacket::decode(&mut view)
 }
