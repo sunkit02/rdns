@@ -20,8 +20,8 @@ pub trait DecodeBinary {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DnsQuery {
-    header: DnsHeader,
-    question: DnsQuestion,
+    pub header: DnsHeader,
+    pub question: DnsQuestion,
 }
 
 impl DnsQuery {
@@ -51,20 +51,59 @@ impl EncodeBinary for DnsQuery {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct DnsPacket {
+    pub header: DnsHeader,
+    pub questions: Vec<DnsQuestion>,
+    pub answers: Vec<DnsRecord>,
+    pub authorities: Vec<DnsRecord>,
+    pub additionals: Vec<DnsRecord>,
+}
+
+impl DecodeBinary for DnsPacket {
+    fn decode(bytes: &mut View) -> Self {
+        let header = DnsHeader::decode(bytes);
+
+        let questions = (0..header.num_questions)
+            .map(|_| DnsQuestion::decode(bytes))
+            .collect();
+
+        let answers = (0..header.num_answers)
+            .map(|_| DnsRecord::decode(bytes))
+            .collect();
+
+        let authorities = (0..header.num_authorities)
+            .map(|_| DnsRecord::decode(bytes))
+            .collect();
+
+        let additionals = (0..header.num_additionals)
+            .map(|_| DnsRecord::decode(bytes))
+            .collect();
+
+        Self {
+            header,
+            questions,
+            answers,
+            authorities,
+            additionals,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct DnsHeader {
-    id: u16,
-    flags: u16,
-    num_questions: u16,
-    num_answers: u16,
-    num_authorities: u16,
-    num_additionals: u16,
+    pub id: u16,
+    pub flags: u16,
+    pub num_questions: u16,
+    pub num_answers: u16,
+    pub num_authorities: u16,
+    pub num_additionals: u16,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DnsQuestion {
-    name: String,
-    type_: u16,
-    class: u16,
+    pub name: String,
+    pub type_: u16,
+    pub class: u16,
 }
 
 impl DnsQuestion {
@@ -144,11 +183,11 @@ impl DecodeBinary for DnsQuestion {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DnsRecord {
-    name: String,
-    type_: u16,
-    class: u16,
-    ttl: u32,
-    data: Vec<u8>,
+    pub name: String,
+    pub type_: u16,
+    pub class: u16,
+    pub ttl: u32,
+    pub data: Vec<u8>,
 }
 
 impl DecodeBinary for DnsRecord {

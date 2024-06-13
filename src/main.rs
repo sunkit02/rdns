@@ -1,41 +1,49 @@
-use std::net::UdpSocket;
-
-use rdns::{
-    view::View, DecodeBinary, DnsHeader, DnsQuery, DnsQuestion, DnsRecord, EncodeBinary, CLASS_IN,
+use std::{
+    env,
+    net::{Ipv4Addr, UdpSocket},
 };
 
+use rdns::{view::View, DecodeBinary, DnsPacket, DnsQuery, EncodeBinary, CLASS_IN};
+
 fn main() {
+    let args = env::args().collect::<Vec<String>>();
+
+    let Some(domain_name) = args.get(1) else {
+        println!("Please enter a domain name.");
+        return;
+    };
+
     let socket = UdpSocket::bind("0.0.0.0:6679").unwrap();
 
-    let query = DnsQuery::new("www.example.com", CLASS_IN).encode();
-    println!("Query hex: {}", to_hex(&query));
+    let response = lookup_domain(domain_name, "8.8.8.8:53", &socket);
 
-    let sent = socket.send_to(query.as_slice(), "8.8.8.8:53").unwrap();
-    println!("Sent {sent} bytes:\n{:?}", query);
+    dbg!(&response);
+
+    println!(
+        "{:?}",
+        Ipv4Addr::from(
+            <&[u8] as TryInto<[u8; 4]>>::try_into(response.answers[0].data.as_slice()).unwrap()
+        )
+    )
+}
+
+fn lookup_domain(domain_name: &str, dns_server: &str, socket: &UdpSocket) -> DnsPacket {
+    let query = DnsQuery::new(domain_name, CLASS_IN).encode();
+
+    let sent = socket.send_to(query.as_slice(), dns_server).unwrap();
+    assert_eq!(
+        sent,
+        query.len(),
+        "Failed to send {} bytes of the query.",
+        query.len() - sent
+    );
 
     let mut buffer = [0u8; 1024];
     let received = socket.recv(&mut buffer).unwrap();
-    println!("Received {received} bytes:\n{:?}", &buffer[..received]);
 
     let mut view = View::new(&buffer[..received]);
 
-    let header = DnsHeader::decode(&mut view);
-    dbg!(header);
+    let packet = DnsPacket::decode(&mut view);
 
-    let question = DnsQuestion::decode(&mut view);
-    dbg!(question);
-
-    let record = DnsRecord::decode(&mut view);
-    dbg!(record);
-
-    assert!(view.is_at_end());
-}
-
-fn to_hex(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
-            acc.push_str(&format!("{b:02x}"));
-            acc
-        })
+    packet
 }
