@@ -1,9 +1,9 @@
-use std::{
-    env,
-    net::{Ipv4Addr, UdpSocket},
-};
+use std::{env, net::UdpSocket};
 
 use rdns::{view::View, DecodeBinary, DnsPacket, DnsQtype, DnsQuery, EncodeBinary};
+
+const GOOGLE_DNS: &str = "8.8.8.8:53";
+const SOME_ROOT_DNS: &str = "198.41.0.4:53";
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
@@ -15,17 +15,19 @@ fn main() {
 
     let socket = UdpSocket::bind("0.0.0.0:6679").unwrap();
 
-    let response = lookup_domain(domain_name, "8.8.8.8:53", &socket);
+    let response = lookup_domain(domain_name, SOME_ROOT_DNS, &socket);
 
     #[cfg(debug_assertions)]
     dbg!(&response);
 
-    println!(
-        "{:?}",
-        Ipv4Addr::from(
-            <&[u8] as TryInto<[u8; 4]>>::try_into(response.answers[0].data.as_slice()).unwrap()
-        )
-    )
+    println!("\n\nAnswers ({}):", response.answers.len());
+    println!("{:#?}", response.answers);
+
+    println!("\n\nAuthorities ({}):", response.authorities.len());
+    println!("{:#?}", response.authorities);
+
+    println!("\n\nAdditionals ({}):", response.additionals.len());
+    println!("{:#?}", response.additionals);
 }
 
 fn lookup_domain(domain_name: &str, dns_server: &str, socket: &UdpSocket) -> DnsPacket {

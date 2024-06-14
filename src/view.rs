@@ -56,16 +56,39 @@ impl<'a> View<'a> {
         self.read_all().to_vec()
     }
 
+    /// Returns a slice of `n` bytes from the start of the view. If `n` is greater than the length
+    /// of the view, it simply returns the entire view.
+    pub fn from_start(&mut self, mut n: usize) -> &[u8] {
+        if n > self.len() {
+            n = self.len();
+        }
+
+        &self.inner[..n]
+    }
+
+    /// Returns the byte pointed at by the needle without advancing the needle.
+    #[cfg(debug_assertions)]
+    pub fn peek(&self) -> Option<u8> {
+        if self.needle < self.len() {
+            Some(self.inner[self.needle])
+        } else {
+            None
+        }
+    }
+
     /// The position the next read from this view will start from.
     pub fn needle(&self) -> usize {
         self.needle
     }
 
-    /// Set the needle's index value to `index` in the view.
+    /// Sets the needle's index value to `index` in the view.
+    ///
+    /// # Panics
+    /// If the needle's current index + `index` > view's length.
     pub fn set_needle(&mut self, index: usize) {
-        if index >= self.len() {
+        if index > self.len() {
             panic!(
-                "needle must be in the range 0..{}, got {}",
+                "needle must be in the range 0..={}, got {}",
                 self.len(),
                 index
             );
@@ -142,5 +165,13 @@ mod tests {
         let bytes = view.read_n_bytes(2);
 
         assert_eq!(bytes, &[2, 3]);
+    }
+
+    #[test]
+    fn can_return_empty_slice_when_needle_eq_length() {
+        let mut view = View::new(&[0, 1, 2, 3, 4]);
+
+        view.set_needle(view.len());
+        assert_eq!(view.read_n_bytes(10), []);
     }
 }

@@ -1,4 +1,3 @@
-use core::panic;
 use std::{mem, usize};
 
 use rand::Rng;
@@ -92,6 +91,7 @@ impl DecodeBinary for DnsPacket {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DnsHeader {
     pub id: u16,
+    // TODO: Replace with a `DnsHeaderFlags` struct
     pub flags: u16,
     pub num_questions: u16,
     pub num_answers: u16,
@@ -194,7 +194,7 @@ pub struct DnsRecord {
     pub type_: DnsType,
     pub class: DnsClass,
     pub ttl: u32,
-    pub data: Vec<u8>,
+    pub data: DnsRecordData,
 }
 
 impl DecodeBinary for DnsRecord {
@@ -209,14 +209,17 @@ impl DecodeBinary for DnsRecord {
         let ttl = u32::from_be_bytes(view.read_n_bytes(4).try_into().unwrap());
 
         let data_len = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap()) as usize;
-        let data = view.read_n_bytes_owned(data_len);
 
-        assert_eq!(
-            data_len,
-            data.len(),
-            "missing {} bytes of data",
-            data_len - data.len()
-        );
+        let data = match type_ {
+            DnsType::A => DnsRecordData::Ipv4Addr(ipv4_to_string(view.read_n_bytes(data_len))),
+            DnsType::AAAA => DnsRecordData::Ipv6Addr(ipv6_to_string(view.read_n_bytes(data_len))),
+            DnsType::NS => {
+                let name_bytes = decode_dns_name(view);
+                let name = String::from_utf8_lossy(&name_bytes).to_string();
+                DnsRecordData::NameServer(name)
+            }
+            _ => DnsRecordData::Unparsed(view.read_n_bytes_owned(data_len)),
+        };
 
         Self {
             name,
@@ -228,10 +231,20 @@ impl DecodeBinary for DnsRecord {
     }
 }
 
+/// TODO: Find and implement all data format specifications at <https://datatracker.ietf.org/doc/html/rfc1035#section-3.3>
+#[derive(Debug, Clone, PartialEq)]
+pub enum DnsRecordData {
+    Ipv4Addr(String),
+    Ipv6Addr(String),
+    NameServer(String),
+    Unparsed(Vec<u8>),
+}
+
 // TODO: Simplify TYPE, QTYPE, and CLASS enum representations using macros
 
 /// TYPE fields are used in resource records.
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
+#[repr(u16)]
 pub enum DnsType {
     /// Value: 1 -> a host address
     A = 1,
@@ -265,33 +278,16 @@ pub enum DnsType {
     MX = 15,
     /// Value: 16 -> text strings
     TXT = 16,
-}
 
-impl DnsType {
-    pub const fn value(&self) -> u16 {
-        match self {
-            Self::A => 1,
-            Self::NS => 2,
-            Self::MD => 3,
-            Self::MF => 4,
-            Self::CNAME => 5,
-            Self::SOA => 6,
-            Self::MB => 7,
-            Self::MG => 8,
-            Self::MR => 9,
-            Self::NULL => 10,
-            Self::WKS => 11,
-            Self::PTR => 12,
-            Self::HINFO => 13,
-            Self::MINFO => 14,
-            Self::MX => 15,
-            Self::TXT => 16,
-        }
-    }
+    /// Value: 28 -> a host address (ipv6)
+    AAAA = 28,
+
+    // TODO: Find and implement the updated list of values for the TYPE field
+    Unknown = 0,
 }
 
 // Table for fast lookup when mapping from integers to enum
-const DNS_TYPES: [DnsType; 16] = [
+const DNS_TYPES: [DnsType; 17] = [
     DnsType::A,
     DnsType::NS,
     DnsType::MD,
@@ -308,21 +304,30 @@ const DNS_TYPES: [DnsType; 16] = [
     DnsType::MINFO,
     DnsType::MX,
     DnsType::TXT,
+    DnsType::AAAA,
 ];
 
 impl TryFrom<u16> for DnsType {
-    type Error = &'static str;
+    type Error = String;
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
-        DNS_TYPES
+        // DNS_TYPES.get(value as usize - 1).copied().ok_or(format!(
+        //     "TYPE field's valid values are in the range 1..=16, got {value}"
+        // ))
+        if value == 28 {
+            return Ok(DnsType::AAAA);
+        }
+
+        Ok(DNS_TYPES
             .get(value as usize - 1)
             .copied()
-            .ok_or("TYPE field's valid values are in the range 1..=16")
+            .unwrap_or(Self::Unknown))
     }
 }
 
 /// QTYPE fields appear in the question part of a query.  QTYPES are a superset of TYPEs, hence all TYPEs are valid QTYPEs.
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
+#[repr(u16)]
 pub enum DnsQtype {
     /// Value: 1 -> a host address
     A = 1,
@@ -391,24 +396,29 @@ const DNS_QTYPES: [DnsQtype; 20] = [
 ];
 
 impl TryFrom<u16> for DnsQtype {
-    type Error = &'static str;
+    type Error = String;
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         const ERR_MSG: &str = "QTYPE field's valid values are in the ranges 1..=16 or 252..=255";
+
         let index = if matches!(value, 1..=16) {
             value - 1
         } else if matches!(value, 252..=255) {
             value - 252 + 16
         } else {
-            return Err(ERR_MSG);
+            return Err(format!("{ERR_MSG}, got: {value}"));
         };
 
-        DNS_QTYPES.get(index as usize).copied().ok_or(ERR_MSG)
+        DNS_QTYPES
+            .get(index as usize)
+            .copied()
+            .ok_or(format!("{ERR_MSG}, got: {value}"))
     }
 }
 
 /// CLASS fields appear in resource records
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
+#[repr(u16)]
 pub enum DnsClass {
     /// Value: 1 -> the Internet
     IN = 1,
@@ -424,13 +434,12 @@ pub enum DnsClass {
 const DNS_CLASSES: [DnsClass; 4] = [DnsClass::IN, DnsClass::CS, DnsClass::CH, DnsClass::HS];
 
 impl TryFrom<u16> for DnsClass {
-    type Error = &'static str;
+    type Error = String;
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
-        DNS_CLASSES
-            .get(value as usize - 1)
-            .copied()
-            .ok_or("CLASS field's valid values are in the range 1..=4")
+        DNS_CLASSES.get(value as usize - 1).copied().ok_or(format!(
+            "CLASS field's valid values are in the range 1..=4, got {value}"
+        ))
     }
 }
 
@@ -475,7 +484,10 @@ fn decode_dns_name(view: &mut View) -> Vec<u8> {
             parts.push('.' as u8);
         };
 
-        length = view.read_n_bytes(1)[0];
+        length = *view
+            .read_n_bytes(1)
+            .get(0)
+            .expect("should have enough bytes");
     }
 
     // Exclude the last period that was inserted redundantly
@@ -499,16 +511,53 @@ fn is_pointer(double_octet: u8) -> bool {
     double_octet & 0b11000000 == 0b11000000
 }
 
+pub fn ipv4_to_string(bytes: &[u8]) -> String {
+    // bytes.len() * 3 for the actual octets
+    // bytes.len() * 2 - 1 for the '.' delimeters
+    let mut string = String::with_capacity((bytes.len() * 3) + (bytes.len() * 2 - 1));
+    let len = bytes.len();
+    for (i, byte) in bytes.iter().enumerate() {
+        string.push_str(byte.to_string().as_str());
+        if i < len - 1 {
+            string.push('.');
+        }
+    }
+
+    string
+}
+
+pub fn ipv6_to_string(bytes: &[u8]) -> String {
+    // Should have 128 bits
+    assert_eq!(bytes.len(), 16);
+
+    // bytes.len() * 3 for the actual octets
+    // bytes.len() * 2 - 1 for the '.' delimeters
+    let mut string = String::with_capacity((bytes.len() * 3) + (bytes.len() * 2 - 1));
+
+    for i in 0..8 {
+        let start = 2 * i;
+        let end = start + 2;
+        let segment = u16::from_be_bytes(bytes[start..end].try_into().unwrap());
+        string.push_str(&format!("{segment:X}"));
+
+        if i < 7 {
+            string.push(':');
+        }
+    }
+
+    string
+}
+
 #[cfg(test)]
 mod tests {
-    use rand::{thread_rng, Rng};
+    use rand::{random, thread_rng, Rng};
 
     use super::*;
 
     #[test]
     fn can_binary_encode_dns_header() {
         let (id, flags, num_questions, num_answers, num_authorities, num_additionals) =
-            rand::thread_rng().gen::<(u16, u16, u16, u16, u16, u16)>();
+            random::<(u16, u16, u16, u16, u16, u16)>();
         let header = DnsHeader {
             id,
             flags,
@@ -526,7 +575,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn can_panic_on_decoding_invalid_dns_header() {
-        let one_byte_short = rand::thread_rng().gen::<[u8; 11]>();
+        let one_byte_short = random::<[u8; 11]>();
 
         DnsHeader::decode(&mut View::new(&one_byte_short));
     }
@@ -550,7 +599,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn can_panic_on_decoding_invalid_dns_question() {
-        let one_byte_short = rand::thread_rng().gen::<[u8; 3]>();
+        let one_byte_short = random::<[u8; 3]>();
 
         DnsQuestion::decode(&mut View::new(&one_byte_short));
     }
@@ -566,5 +615,139 @@ mod tests {
         ];
 
         assert_eq!(encoded, expected);
+    }
+
+    #[test]
+    fn can_decode_dns_name() {
+        let encoded = b"\x03www\x07example\x03com\0\x04blog\xC0\x04";
+        // let encoded = b"\x03www\x07example\x03com\0";
+        let mut view = View::new(encoded);
+
+        let first = "www.example.com";
+        let second = "blog.example.com";
+
+        assert_eq!(String::from_utf8_lossy(&decode_dns_name(&mut view)), first);
+        assert_eq!(String::from_utf8_lossy(&decode_dns_name(&mut view)), second);
+    }
+
+    #[test]
+    fn can_decode_dns_record() {
+        let orig_record = DnsRecord {
+            name: "www.example.com".to_owned(),
+            type_: DnsType::A,
+            class: DnsClass::IN,
+            ttl: 0x12345678,
+            data: DnsRecordData::Ipv4Addr("93.184.215.14".to_owned()),
+        };
+
+        let mut encoded = encode_dns_name(&orig_record.name); // name
+        encoded.extend((orig_record.type_ as u16).to_be_bytes()); // type_
+        encoded.extend((orig_record.class as u16).to_be_bytes()); // class
+        encoded.extend((orig_record.ttl as u32).to_be_bytes()); // ttl
+        encoded.extend(4u16.to_be_bytes()); // data_len
+        encoded.extend([93, 184, 215, 14]); // data
+
+        let mut view = View::new(&encoded);
+
+        let decoded = DnsRecord::decode(&mut view);
+        assert_eq!(decoded, orig_record);
+    }
+
+    #[test]
+    fn can_decode_dns_record_with_pointer() {
+        let orig_record = DnsRecord {
+            name: "blog.example.com".to_owned(),
+            type_: DnsType::NS,
+            class: DnsClass::IN,
+            ttl: 0x12345678,
+            data: DnsRecordData::NameServer("www.example.com".to_owned()),
+        };
+
+        let mut bytes = b"\x07example\x03com\0".to_vec();
+
+        let mut encoded = encode_dns_name(&orig_record.name); // name
+        encoded.extend((orig_record.type_ as u16).to_be_bytes()); // type_
+        encoded.extend((orig_record.class as u16).to_be_bytes()); // class
+        encoded.extend((orig_record.ttl as u32).to_be_bytes()); // ttl
+        let data = b"\x03www\xC0\x00";
+        encoded.extend((data.len() as u16).to_be_bytes()); // data_len
+        encoded.extend(data); // data
+
+        bytes.extend(encoded);
+
+        let mut view = View::new(&bytes);
+        // skip the inital bytes to simulate previous parsing
+        view.set_needle(13);
+
+        let decoded = DnsRecord::decode(&mut view);
+        assert_eq!(decoded, orig_record);
+    }
+
+    #[test]
+    fn can_decode_multiple_independent_dns_record_with_pointer() {
+        let orig_record = DnsRecord {
+            name: "blog.example.com".to_owned(),
+            type_: DnsType::NS,
+            class: DnsClass::IN,
+            ttl: 0x12345678,
+            data: DnsRecordData::NameServer("www.example.com".to_owned()),
+        };
+
+        let mut bytes = b"\x07example\x03com\0".to_vec();
+
+        let mut encoded = encode_dns_name(&orig_record.name); // name
+        encoded.extend((orig_record.type_ as u16).to_be_bytes()); // type_
+        encoded.extend((orig_record.class as u16).to_be_bytes()); // class
+        encoded.extend((orig_record.ttl as u32).to_be_bytes()); // ttl
+        let data = b"\x03www\xC0\x00";
+        encoded.extend((data.len() as u16).to_be_bytes()); // data_len
+        encoded.extend(data); // data
+
+        // Duplicate self twice.
+        encoded.extend(encoded.clone());
+        encoded.extend(encoded.clone());
+
+        bytes.extend(encoded);
+
+        let mut view = View::new(&bytes);
+        // skip the inital bytes to simulate previous parsing
+        view.set_needle(13);
+
+        let decoded_records: Vec<DnsRecord> = (0..3)
+            .map(|i| {
+                let record = DnsRecord::decode(&mut view);
+                dbg!(&record);
+                dbg!(&view, i);
+                record
+            })
+            .collect();
+
+        assert_eq!(
+            decoded_records,
+            [orig_record.clone(), orig_record.clone(), orig_record]
+        );
+    }
+
+    #[test]
+    fn can_decode_dns_packet() {
+        let auth = 4;
+        let add = 0;
+        let packet = [
+            105, 146, 130, 0, 0, 1, 0, 0, 0, auth, 0, add, 6, 103, 111, 111, 103, 108, 101, 3, 99,
+            111, 109, 0, 0, 1, 0, 1, 192, 19, 0, 2, 0, 1, 0, 2, 163, 0, 0, 20, 1, 108, 12, 103,
+            116, 108, 100, 45, 115, 101, 114, 118, 101, 114, 115, 3, 110, 101, 116, 0, 192, 19, 0,
+            2, 0, 1, 0, 2, 163, 0, 0, 4, 1, 106, 192, 42, 192, 19, 0, 2, 0, 1, 0, 2, 163, 0, 0, 4,
+            1, 104, 192, 42, 192, 19, 0, 2, 0, 1, 0, 2, 163, 0, 0, 4, 1, 100, 192, 42,
+        ];
+
+        let mut view = View::new(&packet);
+
+        let packet = DnsPacket::decode(&mut view);
+
+        assert_eq!(packet.header.num_authorities, auth as u16);
+        assert_eq!(packet.header.num_additionals, add as u16);
+
+        dbg!(packet);
+        panic!();
     }
 }
