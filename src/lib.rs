@@ -1,4 +1,4 @@
-use std::{mem, usize};
+use std::{fmt::Display, mem, usize};
 
 use rand::Rng;
 use view::View;
@@ -243,6 +243,18 @@ pub enum DnsRecordData {
     Unparsed(Vec<u8>),
 }
 
+impl Display for DnsRecordData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DnsRecordData::Ipv4Addr(addr) => write!(f, "{addr}"),
+            DnsRecordData::Ipv6Addr(addr) => write!(f, "{addr}"),
+            DnsRecordData::NameServer(name) => write!(f, "{name}"),
+            DnsRecordData::Text(text) => write!(f, "{text}"),
+            DnsRecordData::Unparsed(bytes) => write!(f, "{bytes:?}"),
+        }
+    }
+}
+
 // TODO: Simplify TYPE, QTYPE, and CLASS enum representations using macros
 
 /// TYPE fields are used in resource records.
@@ -325,6 +337,12 @@ impl TryFrom<u16> for DnsType {
             .get(value as usize - 1)
             .copied()
             .unwrap_or(Self::Unknown))
+    }
+}
+
+impl Display for DnsType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
     }
 }
 
@@ -419,6 +437,12 @@ impl TryFrom<u16> for DnsQtype {
     }
 }
 
+impl Display for DnsQtype {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
 /// CLASS fields appear in resource records
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 #[repr(u16)]
@@ -443,6 +467,12 @@ impl TryFrom<u16> for DnsClass {
         DNS_CLASSES.get(value as usize - 1).copied().ok_or(format!(
             "CLASS field's valid values are in the range 1..=4, got {value}"
         ))
+    }
+}
+
+impl Display for DnsClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
     }
 }
 
