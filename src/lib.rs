@@ -746,8 +746,5 @@ mod tests {
 
         assert_eq!(packet.header.num_authorities, auth as u16);
         assert_eq!(packet.header.num_additionals, add as u16);
-
-        dbg!(packet);
-        panic!();
     }
 }
