@@ -71,14 +71,14 @@ fn pretty_print_response(packet: &DnsPacket) {
     if answers > 0 {
         println!();
         println!(";; ANSWER SECTION ({answers}):");
-        for authority in &packet.authorities {
+        for answer in &packet.answers {
             println!(
                 "{:<name_width$}{:<ttl_width$}{:<class_width$}{:<type_width$}{}",
-                authority.name,
-                authority.ttl,
-                authority.class.to_string(),
-                authority.type_.to_string(),
-                authority.data
+                answer.name,
+                answer.ttl,
+                answer.class.to_string(),
+                answer.type_.to_string(),
+                answer.data
             );
         }
     }
