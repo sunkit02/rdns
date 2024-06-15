@@ -27,7 +27,7 @@ impl DnsQuery {
     pub fn new(domain_name: &str, query_type: DnsQtype) -> Self {
         let header = DnsHeader {
             id: rand::thread_rng().gen(),
-            flags: 0,
+            flags: DnsHeaderFlags(RECURSION_DESIRED),
             num_questions: 1,
             num_answers: 0,
             num_authorities: 0,
@@ -88,15 +88,269 @@ impl DecodeBinary for DnsPacket {
     }
 }
 
+/// The header contains the following fields:
+///
+///                                 1  1  1  1  1  1
+///   0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
+/// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+/// |                      ID                       |
+/// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+/// |QR|   Opcode  |AA|TC|RD|RA|   Z    |   RCODE   |
+/// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+/// |                    QDCOUNT                    |
+/// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+/// |                    ANCOUNT                    |
+/// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+/// |                    NSCOUNT                    |
+/// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+/// |                    ARCOUNT                    |
+/// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+///
+///
+/// **ID**
+/// A 16 bit identifier assigned by the program that generates any kind of query.  This identifier is copied the corresponding reply and can be used by the requester to match up replies to outstanding queries.
+///
+/// **QR|Opcode|AA|TC|RD|RA|Z|RCODE**
+/// Refer to [DnsHeaderFlags] documentation.
+///
+/// **QDCOUNT**         
+/// an unsigned 16 bit integer specifying the number of entries in the question section.
+///
+/// **ANCOUNT**         
+/// an unsigned 16 bit integer specifying the number of resource records in the answer section.
+///
+/// **NSCOUNT**
+/// an unsigned 16 bit integer specifying the number of name server resource records in the authority records section.
+///
+/// **ARCOUNT**
+/// an unsigned 16 bit integer specifying the number of resource records in the additional records section.
+///
+///
 #[derive(Debug, Clone, PartialEq)]
 pub struct DnsHeader {
     pub id: u16,
     // TODO: Replace with a `DnsHeaderFlags` struct
-    pub flags: u16,
+    pub flags: DnsHeaderFlags,
     pub num_questions: u16,
     pub num_answers: u16,
     pub num_authorities: u16,
     pub num_additionals: u16,
+}
+
+/// The flags section of a DNS header
+///
+///     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+///     |QR|   Opcode  |AA|TC|RD|RA|   Z    |   RCODE   |
+///     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+///
+///
+/// **QR**
+/// A one bit field that specifies whether this message is a
+///                 query (0), or a response (1).
+///
+/// **OPCODE**
+/// A four bit field that specifies kind of query in this message.  This value is set by the
+/// originator of a query and copied into the response.  The values are:
+///
+///                 0               a standard query (QUERY)
+///
+///                 1               an inverse query (IQUERY)
+///
+///                 2               a server status request (STATUS)
+///
+///                 3-15            reserved for future use
+///
+/// **AA**
+/// Authoritative Answer - this bit is valid in responses, and specifies that the responding name
+/// server is an authority for the domain name in question section.
+///
+/// Note that the contents of the answer section may have multiple owner names because of aliases.
+/// The AA bit corresponds to the name which matches the query name, or the first owner name in the
+/// answer section.
+///
+/// **TC**
+/// TrunCation - specifies that this message was truncated due to length greater than that
+/// permitted on the transmission channel.
+///
+/// **RD**              
+/// Recursion Desired - this bit may be set in a query and is copied into the response.  If RD is
+/// set, it directs the name server to pursue the query recursively. Recursive query support is
+/// optional.
+///
+/// **RA**
+/// Recursion Available - this be is set or cleared in a response, and denotes whether recursive
+/// query support is available in the name server.
+///
+/// **Z**
+/// Reserved for future use.  Must be zero in all queries and responses.
+///
+/// **RCODE**           
+/// Response code - this 4 bit field is set as part of responses.  The values have the following
+/// interpretation:
+///
+///                 0               No error condition
+///
+///                 1               Format error - The name server was unable to interpret the
+///                                 query.
+///
+///                 2               Server failure - The name server was unable to process this
+///                                 query due to a problem with the name server.
+///
+///                 3               Name Error - Meaningful only for responses from an
+///                                 authoritative name server, this code signifies that the domain
+///                                 name referenced in the query does not exist.
+///
+///                 4               Not Implemented - The name server does not support the
+///                                 requested kind of query.
+///
+///                 5               Refused - The name server refuses to perform the specified
+///                                 operation for policy reasons.  For example, a name server may
+///                                 not wish to provide the information to the particular
+///                                 requester, or a name server may not wish to perform a
+///                                 particular operation (e.g., zone
+///
+///
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[repr(transparent)]
+// TODO: Create a builder for this
+pub struct DnsHeaderFlags(u16);
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[repr(u8)]
+pub enum DnsOpcode {
+    QUERY = 0,
+    IQUERY = 1,
+    STATUS = 2,
+    RESERVED(u8),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[repr(u8)]
+pub enum DnsResponseCode {
+    /// No error condition
+    NoError = 0,
+
+    /// Format error - The name server was unable to interpret the query.
+    FormatError = 1,
+
+    /// Server failure - The name server was unable to process this query due to a problem with the
+    /// name server.
+    ServerFailure = 2,
+
+    /// Name Error - Meaningful only for responses from an authoritative name server, this code
+    /// signifies that the domain name referenced in the query does not exist.
+    NameError = 3,
+
+    /// Not Implemented - The name server does not support the requested kind of query.
+    NotImplemented = 4,
+
+    /// Refused - The name server refuses to perform the specified operation for policy reasons.
+    /// For example, a name server may not wish to provide the information to the particular
+    /// requester, or a name server may not wish to perform a particular operation (e.g., zone
+    /// transfer) for particular data.
+    Refused = 5,
+
+    /// Reserved for future use.
+    Reserved(u8),
+}
+
+impl DnsHeaderFlags {
+    pub fn is_response(&self) -> bool {
+        self.0 & 0x8000 > 0
+    }
+
+    pub fn is_query(&self) -> bool {
+        self.0 & 0x8000 == 0
+    }
+
+    pub fn opcode(&self) -> DnsOpcode {
+        let opcode = self.0 & 0x4000 >> 11;
+        match opcode {
+            0 => DnsOpcode::QUERY,
+            1 => DnsOpcode::IQUERY,
+            2 => DnsOpcode::STATUS,
+            3..=15 => DnsOpcode::RESERVED(opcode as u8),
+            _ => unreachable!("opcode should have the value in range 0..=15"),
+        }
+    }
+
+    /// AA Authoritative Answer - this bit is valid in responses, and specifies that the responding
+    /// name server is an authority for the domain name in question section.
+    pub fn is_authoritative_answer(&self) -> bool {
+        self.0 & 0x0400 > 0
+    }
+
+    pub fn is_truncated(&self) -> bool {
+        self.0 & 0x0200 > 0
+    }
+
+    pub fn recursion_desired(&self) -> bool {
+        self.0 & 0x0100 > 0
+    }
+
+    pub fn recursion_available(&self) -> bool {
+        self.0 & 0x0080 > 0
+    }
+
+    pub fn response_code(&self) -> DnsResponseCode {
+        match self.0 & 0x000F {
+            0 => DnsResponseCode::NoError,
+            1 => DnsResponseCode::FormatError,
+            2 => DnsResponseCode::ServerFailure,
+            3 => DnsResponseCode::NameError,
+            4 => DnsResponseCode::NotImplemented,
+            5 => DnsResponseCode::Refused,
+            code @ 6..=15 => DnsResponseCode::Reserved(code as u8),
+            _ => unreachable!("response code should have the value in range 0..=15"),
+        }
+    }
+
+    /// Returns the abbreviated names of the flags that are set (the flag bit is one).
+    pub fn get_set_flags_abbrv(&self) -> Vec<&'static str> {
+        let mut flags = Vec::with_capacity(4);
+        if self.is_response() {
+            flags.push("qr");
+        }
+        if self.is_authoritative_answer() {
+            flags.push("aa");
+        }
+        if self.is_truncated() {
+            flags.push("tr");
+        }
+        if self.recursion_desired() {
+            flags.push("rd");
+        }
+        if self.recursion_available() {
+            flags.push("ra");
+        }
+        flags
+    }
+}
+
+impl EncodeBinary for DnsHeaderFlags {
+    fn encode(&self) -> Vec<u8> {
+        self.0.to_be_bytes().to_vec()
+    }
+}
+
+impl DecodeBinary for DnsHeaderFlags {
+    fn decode(bytes: &mut View) -> Self {
+        Self(u16::from_be_bytes(
+            bytes.read_n_bytes(2).try_into().unwrap(),
+        ))
+    }
+}
+
+impl Display for DnsOpcode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl Display for DnsResponseCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,15 +373,16 @@ impl DnsQuestion {
 impl EncodeBinary for DnsHeader {
     fn encode(&self) -> Vec<u8> {
         [
-            self.id.to_be_bytes(),
-            self.flags.to_be_bytes(),
-            self.num_questions.to_be_bytes(),
-            self.num_answers.to_be_bytes(),
-            self.num_authorities.to_be_bytes(),
-            self.num_additionals.to_be_bytes(),
+            &self.id.to_be_bytes()[..],
+            &self.flags.encode().as_slice(),
+            &self.num_questions.to_be_bytes()[..],
+            &self.num_answers.to_be_bytes()[..],
+            &self.num_authorities.to_be_bytes()[..],
+            &self.num_additionals.to_be_bytes()[..],
         ]
         .into_iter()
         .flatten()
+        .copied()
         .collect::<Vec<u8>>()
     }
 }
@@ -140,7 +395,7 @@ impl DecodeBinary for DnsHeader {
         // NOTE: The unwraps are safe because the length of `bytes` has been checked
         // by the above assert.
         let id = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
-        let flags = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
+        let flags = DnsHeaderFlags(u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap()));
         let num_questions = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
         let num_answers = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
         let num_authorities = u16::from_be_bytes(view.read_n_bytes(2).try_into().unwrap());
@@ -598,7 +853,7 @@ mod tests {
             random::<(u16, u16, u16, u16, u16, u16)>();
         let header = DnsHeader {
             id,
-            flags,
+            flags: DnsHeaderFlags(flags),
             num_questions,
             num_answers,
             num_authorities,
