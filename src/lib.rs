@@ -218,6 +218,7 @@ impl DecodeBinary for DnsRecord {
                 let name = String::from_utf8_lossy(&name_bytes).to_string();
                 DnsRecordData::NameServer(name)
             }
+            DnsType::TXT => DnsRecordData::Text(decode_txt_data(view)),
             _ => DnsRecordData::Unparsed(view.read_n_bytes_owned(data_len)),
         };
 
@@ -237,6 +238,8 @@ pub enum DnsRecordData {
     Ipv4Addr(String),
     Ipv6Addr(String),
     NameServer(String),
+    // TODO: Full implmentation according to <https://datatracker.ietf.org/doc/html/rfc1464>
+    Text(String),
     Unparsed(Vec<u8>),
 }
 
@@ -509,6 +512,11 @@ fn decode_compressed_dns_name(view: &mut View, pointer: usize) -> Vec<u8> {
 fn is_pointer(double_octet: u8) -> bool {
     // Check if first two bits are set in the leading octet
     double_octet & 0b11000000 == 0b11000000
+}
+
+fn decode_txt_data(view: &mut View) -> String {
+    let length = view.read_n_bytes(1)[0];
+    String::from_utf8_lossy(view.read_n_bytes(length as usize)).to_string()
 }
 
 pub fn ipv4_to_string(bytes: &[u8]) -> String {
