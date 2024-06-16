@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use chrono::prelude::*;
 
 use std::{
@@ -9,56 +10,104 @@ use std::{
 
 use rdns::{view::View, DecodeBinary, DnsPacket, DnsQtype, DnsQuery, EncodeBinary};
 
-const GOOGLE_DNS: (&str, Option<&str>) = ("8.8.8.8:53", None);
-const A_ROOT_SERVER: (&str, Option<&str>) = ("198.41.0.4:53", Some("a.root-servers.net")); // a.root-servers.net
+const APP_NAME: &str = "rdns";
+const GOOGLE_DNS: (&str, Option<&str>) = ("8.8.8.8", None);
+const A_ROOT_SERVER: (&str, Option<&str>) = ("198.41.0.4", Some("a.root-servers.net")); // a.root-servers.net
 
-fn main() {
-    let args = env::args().collect::<Vec<String>>();
+fn main() -> Result<()> {
+    let default_server_addr = A_ROOT_SERVER.0;
 
-    let Some(domain_name) = args.get(1) else {
-        println!("Please enter a domain name.");
-        return;
-    };
+    let CliArgs {
+        server_addr,
+        domain,
+    } = parse_cli_args()?;
 
-    let (server_addr, server_name) = GOOGLE_DNS;
+    let server_addr = server_addr.unwrap_or(default_server_addr.to_owned());
 
     let socket = UdpSocket::bind("0.0.0.0:6679").unwrap();
 
     let query_start_time = Instant::now();
 
     let mut used_tcp = false;
-    let (response, message_size) = match lookup_domain(domain_name, server_addr, &socket) {
+    let (response, message_size) = match lookup_domain(&domain, &server_addr, &socket) {
         Ok(response) => response,
         Err(_) => {
             #[cfg(debug_assertions)]
             eprintln!("->> DEBUG: Response truncated, using TCP.");
 
             used_tcp = true;
-            let mut stream = TcpStream::connect(server_addr).unwrap();
-            lookup_domain_tcp(domain_name, &mut stream)
+            let mut stream = TcpStream::connect((server_addr.clone(), 53)).unwrap();
+            lookup_domain_tcp(&domain, &mut stream)
         }
     };
 
     let query_time = query_start_time.elapsed();
     let time = Local::now();
 
-    let server_addr_splits = server_addr.split(':').collect::<Vec<&str>>();
-    let [server_ip, server_port, ..] = server_addr_splits.as_slice() else {
-        panic!("bad DNS server address format: '{}'", server_addr);
-    };
-
     pretty_print_response(&response);
     println!();
+
+    // TODO: dynamically query the server name or server ip to be displayed in the footer
     print_footer(
         &query_time,
-        server_ip,
-        server_port,
-        server_name.unwrap_or(server_ip),
+        &server_addr,
+        &server_addr,
         used_tcp,
         &time,
         message_size,
     );
     println!();
+
+    Ok(())
+}
+
+struct CliArgs {
+    server_addr: Option<String>,
+    domain: String,
+}
+
+fn parse_cli_args() -> Result<CliArgs> {
+    let mut args = env::args().collect::<Vec<String>>();
+
+    let mut server_ip = None;
+    let mut domain = None;
+
+    match args.len() {
+        1 => return Err(anyhow!(get_usage_string())),
+        2 => {
+            if args[1].starts_with('@') {
+                server_ip = Some(args[1].clone());
+            } else {
+                domain = Some(args[1].clone());
+            }
+        }
+        3 => {
+            if !args[1].starts_with('@') {
+                return Err(anyhow!(
+                    "Unknown argument: '{}'\n{}",
+                    args[2],
+                    get_usage_string()
+                ));
+            }
+
+            // Drop the '@' in front of the server ip
+            args[1].remove(0);
+
+            server_ip = Some(args[1].clone());
+            domain = Some(args[2].clone());
+        }
+        _ => return Err(anyhow!(get_usage_string())),
+    };
+
+    let domain = domain.ok_or(anyhow!(
+        "Please enter a domain to query.\n{}",
+        get_usage_string()
+    ))?;
+
+    Ok(CliArgs {
+        server_addr: server_ip,
+        domain,
+    })
 }
 
 fn lookup_domain_tcp(domain_name: &str, stream: &mut TcpStream) -> (DnsPacket, usize) {
@@ -89,7 +138,7 @@ fn lookup_domain(
 ) -> Result<(DnsPacket, usize), ()> {
     let query = DnsQuery::new(domain_name, DnsQtype::A).encode();
 
-    let sent = socket.send_to(query.as_slice(), dns_server).unwrap();
+    let sent = socket.send_to(query.as_slice(), (dns_server, 53)).unwrap();
     assert_eq!(
         sent,
         query.len(),
@@ -210,18 +259,18 @@ const MONTHS: [&str; 12] = [
 fn print_footer(
     query_time: &Duration,
     server_ip: &str,
-    server_port: &str,
     server_name: &str,
     used_tcp: bool,
     time: &DateTime<Local>,
     message_size: usize,
 ) {
+    const SERVER_PORT: u16 = 53;
     println!(";; Query time: {:?}", query_time);
 
     println!(
         ";; SERVER: {}#{}({}) ({})",
         server_ip,
-        server_port,
+        SERVER_PORT,
         server_name,
         if used_tcp { "TCP" } else { "UDP" }
     );
@@ -240,4 +289,8 @@ fn print_footer(
     );
 
     println!(";; MSG SIZE  recvd: {}", message_size);
+}
+
+fn get_usage_string() -> String {
+    format!("Usage: {APP_NAME} [@servername] domain")
 }
