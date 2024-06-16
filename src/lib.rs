@@ -473,6 +473,25 @@ impl DecodeBinary for DnsRecord {
                 let name = String::from_utf8_lossy(&name_bytes).to_string();
                 DnsRecordData::NameServer(name)
             }
+            DnsType::SOA => {
+                let mname = String::from_utf8_lossy(&decode_dns_name(view)).to_string();
+                let rname = String::from_utf8_lossy(&decode_dns_name(view)).to_string();
+                let serial = u32::from_be_bytes(view.read_n_bytes(4).try_into().unwrap());
+                let refresh = u32::from_be_bytes(view.read_n_bytes(4).try_into().unwrap());
+                let retry = u32::from_be_bytes(view.read_n_bytes(4).try_into().unwrap());
+                let expire = u32::from_be_bytes(view.read_n_bytes(4).try_into().unwrap());
+                let minimum = u32::from_be_bytes(view.read_n_bytes(4).try_into().unwrap());
+
+                DnsRecordData::StartOfAuthority {
+                    mname,
+                    rname,
+                    serial,
+                    refresh,
+                    retry,
+                    expire,
+                    minimum,
+                }
+            }
             DnsType::TXT => DnsRecordData::Text(decode_txt_data(view)),
             _ => DnsRecordData::Unparsed(view.read_n_bytes_owned(data_len)),
         };
@@ -493,6 +512,15 @@ pub enum DnsRecordData {
     Ipv4Addr(String),
     Ipv6Addr(String),
     NameServer(String),
+    StartOfAuthority {
+        mname: String,
+        rname: String,
+        serial: u32,
+        refresh: u32,
+        retry: u32,
+        expire: u32,
+        minimum: u32,
+    },
     // TODO: Full implmentation according to <https://datatracker.ietf.org/doc/html/rfc1464>
     Text(String),
     Unparsed(Vec<u8>),
@@ -504,8 +532,22 @@ impl Display for DnsRecordData {
             DnsRecordData::Ipv4Addr(addr) => write!(f, "{addr}"),
             DnsRecordData::Ipv6Addr(addr) => write!(f, "{addr}"),
             DnsRecordData::NameServer(name) => write!(f, "{name}"),
+            DnsRecordData::StartOfAuthority {
+                mname,
+                rname,
+                serial,
+                refresh,
+                retry,
+                expire,
+                minimum,
+            } => {
+                write!(
+                    f,
+                    "{mname} {rname} {serial} {refresh} {retry} {expire} {minimum}"
+                )
+            }
             DnsRecordData::Text(text) => write!(f, "{text}"),
-            DnsRecordData::Unparsed(bytes) => write!(f, "{bytes:?}"),
+            DnsRecordData::Unparsed(bytes) => write!(f, "UNPARSED DATA: {bytes:?}"),
         }
     }
 }
