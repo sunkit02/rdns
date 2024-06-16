@@ -28,14 +28,11 @@ fn main() -> Result<()> {
 
     let query_start_time = Instant::now();
 
-    let mut used_tcp = false;
-    let (response, message_size) = match lookup_domain(&domain, &server_addr, &socket) {
+    let mut tcp_used = false;
+    let (response, message_size) = match lookup_domain_udp(&domain, &server_addr, &socket) {
         Ok(response) => response,
         Err(_) => {
-            #[cfg(debug_assertions)]
-            eprintln!("->> DEBUG: Response truncated, using TCP.");
-
-            used_tcp = true;
+            tcp_used = true;
             let mut stream = TcpStream::connect((server_addr.clone(), 53)).unwrap();
             lookup_domain_tcp(&domain, &mut stream)
         }
@@ -52,7 +49,7 @@ fn main() -> Result<()> {
         &query_time,
         &server_addr,
         &server_addr,
-        used_tcp,
+        tcp_used,
         &time,
         message_size,
     );
@@ -131,7 +128,7 @@ fn lookup_domain_tcp(domain_name: &str, stream: &mut TcpStream) -> (DnsPacket, u
     (packet, received)
 }
 
-fn lookup_domain(
+fn lookup_domain_udp(
     domain_name: &str,
     dns_server: &str,
     socket: &UdpSocket,
@@ -260,7 +257,7 @@ fn print_footer(
     query_time: &Duration,
     server_ip: &str,
     server_name: &str,
-    used_tcp: bool,
+    tcp_used: bool,
     time: &DateTime<Local>,
     message_size: usize,
 ) {
@@ -272,7 +269,7 @@ fn print_footer(
         server_ip,
         SERVER_PORT,
         server_name,
-        if used_tcp { "TCP" } else { "UDP" }
+        if tcp_used { "TCP" } else { "UDP" }
     );
 
     let year = time.year();
