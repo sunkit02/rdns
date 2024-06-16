@@ -1,13 +1,16 @@
+use chrono::prelude::*;
+
 use std::{
     env,
     io::{Read, Write},
     net::{TcpStream, UdpSocket},
+    time::{Duration, Instant},
 };
 
 use rdns::{view::View, DecodeBinary, DnsPacket, DnsQtype, DnsQuery, EncodeBinary};
 
-const GOOGLE_DNS: &str = "8.8.8.8:53";
-const A_ROOT_SERVER: &str = "198.41.0.4:53"; // a.root-servers.net
+const GOOGLE_DNS: (&str, Option<&str>) = ("8.8.8.8:53", None);
+const A_ROOT_SERVER: (&str, Option<&str>) = ("198.41.0.4:53", Some("a.root-servers.net")); // a.root-servers.net
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
@@ -17,22 +20,48 @@ fn main() {
         return;
     };
 
+    let (server_addr, server_name) = GOOGLE_DNS;
+
     let socket = UdpSocket::bind("0.0.0.0:6679").unwrap();
 
-    let response = match lookup_domain(domain_name, A_ROOT_SERVER, &socket) {
+    let query_start_time = Instant::now();
+
+    let mut used_tcp = false;
+    let (response, message_size) = match lookup_domain(domain_name, server_addr, &socket) {
         Ok(response) => response,
         Err(_) => {
             #[cfg(debug_assertions)]
             eprintln!("->> DEBUG: Response truncated, using TCP.");
-            let mut stream = TcpStream::connect(A_ROOT_SERVER).unwrap();
+
+            used_tcp = true;
+            let mut stream = TcpStream::connect(server_addr).unwrap();
             lookup_domain_tcp(domain_name, &mut stream)
         }
     };
 
+    let query_time = query_start_time.elapsed();
+    let time = Local::now();
+
+    let server_addr_splits = server_addr.split(':').collect::<Vec<&str>>();
+    let [server_ip, server_port, ..] = server_addr_splits.as_slice() else {
+        panic!("bad DNS server address format: '{}'", server_addr);
+    };
+
     pretty_print_response(&response);
+    println!();
+    print_footer(
+        &query_time,
+        server_ip,
+        server_port,
+        server_name.unwrap_or(server_ip),
+        used_tcp,
+        &time,
+        message_size,
+    );
+    println!();
 }
 
-fn lookup_domain_tcp(domain_name: &str, stream: &mut TcpStream) -> DnsPacket {
+fn lookup_domain_tcp(domain_name: &str, stream: &mut TcpStream) -> (DnsPacket, usize) {
     let query = DnsQuery::new(domain_name, DnsQtype::A).encode();
     let query_len = (query.len() as u16).to_be_bytes();
     let mut bytes = query_len.to_vec();
@@ -50,10 +79,14 @@ fn lookup_domain_tcp(domain_name: &str, stream: &mut TcpStream) -> DnsPacket {
 
     assert!(view.is_at_end());
 
-    packet
+    (packet, received)
 }
 
-fn lookup_domain(domain_name: &str, dns_server: &str, socket: &UdpSocket) -> Result<DnsPacket, ()> {
+fn lookup_domain(
+    domain_name: &str,
+    dns_server: &str,
+    socket: &UdpSocket,
+) -> Result<(DnsPacket, usize), ()> {
     let query = DnsQuery::new(domain_name, DnsQtype::A).encode();
 
     let sent = socket.send_to(query.as_slice(), dns_server).unwrap();
@@ -76,7 +109,7 @@ fn lookup_domain(domain_name: &str, dns_server: &str, socket: &UdpSocket) -> Res
     if packet.header.flags.is_truncated() {
         Err(())
     } else {
-        Ok(packet)
+        Ok((packet, received))
     }
 }
 
@@ -168,4 +201,43 @@ fn pretty_print_response(packet: &DnsPacket) {
             );
         }
     }
+}
+
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+fn print_footer(
+    query_time: &Duration,
+    server_ip: &str,
+    server_port: &str,
+    server_name: &str,
+    used_tcp: bool,
+    time: &DateTime<Local>,
+    message_size: usize,
+) {
+    println!(";; Query time: {:?}", query_time);
+
+    println!(
+        ";; SERVER: {}#{}({}) ({})",
+        server_ip,
+        server_port,
+        server_name,
+        if used_tcp { "TCP" } else { "UDP" }
+    );
+
+    let year = time.year();
+    let month = MONTHS[time.month() as usize];
+    let day = time.day();
+    let hour = time.hour();
+    let minute = time.minute();
+    let second = time.second();
+    let weekday = time.weekday();
+
+    println!(
+        ";; WHEN: {} {} {} {}:{}:{} {}",
+        weekday, month, day, hour, minute, second, year
+    );
+
+    println!(";; MSG SIZE  recvd: {}", message_size);
 }
