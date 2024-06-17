@@ -108,7 +108,12 @@ fn parse_cli_args() -> Result<CliArgs> {
 }
 
 fn lookup_domain_tcp(domain_name: &str, stream: &mut TcpStream) -> (DnsPacket, usize) {
-    let query = DnsQuery::new(domain_name, DnsQtype::A).encode();
+    let query = DnsQuery::builder()
+        .domain(domain_name.to_owned())
+        .type_(DnsQtype::A)
+        .build()
+        .encode();
+
     let query_len = (query.len() as u16).to_be_bytes();
     let mut bytes = query_len.to_vec();
     bytes.extend(query);
@@ -128,12 +133,17 @@ fn lookup_domain_tcp(domain_name: &str, stream: &mut TcpStream) -> (DnsPacket, u
     (packet, received)
 }
 
+// TODO: Extract query building from lookup_domain_udp and tcp
 fn lookup_domain_udp(
     domain_name: &str,
     dns_server: &str,
     socket: &UdpSocket,
 ) -> Result<(DnsPacket, usize), ()> {
-    let query = DnsQuery::new(domain_name, DnsQtype::A).encode();
+    let query = DnsQuery::builder()
+        .domain(domain_name.to_owned())
+        .type_(DnsQtype::A)
+        .build()
+        .encode();
 
     let sent = socket.send_to(query.as_slice(), (dns_server, 53)).unwrap();
     assert_eq!(

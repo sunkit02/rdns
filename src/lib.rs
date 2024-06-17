@@ -1,6 +1,6 @@
 use std::{fmt::Display, mem, usize};
 
-use rand::Rng;
+use rand::random;
 use view::View;
 
 pub mod view;
@@ -24,19 +24,8 @@ pub struct DnsQuery {
 }
 
 impl DnsQuery {
-    pub fn new(domain_name: &str, query_type: DnsQtype) -> Self {
-        let header = DnsHeader {
-            id: rand::thread_rng().gen(),
-            flags: DnsHeaderFlags(RECURSION_DESIRED),
-            num_questions: 1,
-            num_answers: 0,
-            num_authorities: 0,
-            num_additionals: 0,
-        };
-
-        let question = DnsQuestion::new(domain_name, query_type, DnsClass::IN);
-
-        Self { header, question }
+    pub fn builder() -> DnsQueryBuilder {
+        DnsQueryBuilder::default()
     }
 }
 
@@ -46,6 +35,100 @@ impl EncodeBinary for DnsQuery {
         let question_encoded = self.question.encode().into_iter();
 
         header_encoded.chain(question_encoded).collect()
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct DnsQueryBuilder {
+    // Header
+    id: Option<u16>,
+    flags: DnsHeaderFlags,
+    // Query
+    domain: Option<String>,
+    type_: Option<DnsQtype>,
+    class: Option<DnsClass>,
+}
+
+impl DnsQueryBuilder {
+    pub fn build(mut self) -> DnsQuery {
+        let id = self.id.unwrap_or_else(|| random::<u16>());
+
+        // We are building a DNS query here.
+        self.flags.set_is_query();
+        let flags = self.flags;
+
+        let domain = self.domain.expect("a domain must be provided");
+        let type_ = self.type_.unwrap_or(DnsQtype::A);
+        let class = self.class.unwrap_or(DnsClass::IN);
+
+        let header = DnsHeader {
+            id,
+            flags,
+            num_questions: 1, // Only support querying of one domain for now
+
+            // Set by server
+            num_answers: 0,
+            num_authorities: 0,
+            num_additionals: 0,
+        };
+
+        let question = DnsQuestion {
+            name: domain,
+            type_,
+            class,
+        };
+
+        DnsQuery { header, question }
+    }
+
+    pub fn id(mut self, id: u16) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    pub fn domain(mut self, domain: String) -> Self {
+        self.domain = Some(domain);
+        self
+    }
+
+    pub fn type_(mut self, type_: DnsQtype) -> Self {
+        self.type_ = Some(type_);
+        self
+    }
+
+    pub fn class(mut self, class: DnsClass) -> Self {
+        self.class = Some(class);
+        self
+    }
+
+    pub fn opcode(mut self, opcode: DnsOpcode) -> Self {
+        self.flags.set_opcode(opcode);
+        self
+    }
+
+    pub fn authoritative_answer(mut self) -> Self {
+        self.flags.set_is_authoritative_answer();
+        self
+    }
+
+    pub fn truncated(mut self) -> Self {
+        self.flags.set_is_truncated();
+        self
+    }
+
+    pub fn recursion_desired(mut self) -> Self {
+        self.flags.set_recursion_desired();
+        self
+    }
+
+    pub fn recursion_available(mut self) -> Self {
+        self.flags.set_recursion_available();
+        self
+    }
+
+    pub fn response_code(mut self, response_code: DnsResponseCode) -> Self {
+        self.flags.set_response_code(response_code);
+        self
     }
 }
 
@@ -210,7 +293,7 @@ pub struct DnsHeader {
 ///                                 particular operation (e.g., zone
 ///
 ///
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
 #[repr(transparent)]
 // TODO: Create a builder for this
 pub struct DnsHeaderFlags(u16);
@@ -259,8 +342,16 @@ impl DnsHeaderFlags {
         self.0 & 0x8000 > 0
     }
 
+    pub fn set_is_response(&mut self) {
+        self.0 |= 0x8000
+    }
+
     pub fn is_query(&self) -> bool {
         self.0 & 0x8000 == 0
+    }
+
+    pub fn set_is_query(&mut self) {
+        self.0 &= 0x7FFF
     }
 
     pub fn opcode(&self) -> DnsOpcode {
@@ -270,8 +361,20 @@ impl DnsHeaderFlags {
             1 => DnsOpcode::IQUERY,
             2 => DnsOpcode::STATUS,
             3..=15 => DnsOpcode::RESERVED(opcode as u8),
-            _ => unreachable!("opcode should have the value in range 0..=15"),
+            _ => unreachable!("opcode must be in range 0..=15"),
         }
+    }
+
+    pub fn set_opcode(&mut self, opcode: DnsOpcode) {
+        let opcode = match opcode {
+            DnsOpcode::QUERY => 0,
+            DnsOpcode::IQUERY => 1,
+            DnsOpcode::STATUS => 2,
+            DnsOpcode::RESERVED(code @ 3..=15) => code as u16,
+            DnsOpcode::RESERVED(_) => panic!("reserved opcodes must be in range 3..=15"),
+        };
+
+        self.0 &= opcode << 11;
     }
 
     /// AA Authoritative Answer - this bit is valid in responses, and specifies that the responding
@@ -280,16 +383,32 @@ impl DnsHeaderFlags {
         self.0 & 0x0400 > 0
     }
 
+    pub fn set_is_authoritative_answer(&mut self) {
+        self.0 |= 0x0400
+    }
+
     pub fn is_truncated(&self) -> bool {
         self.0 & 0x0200 > 0
+    }
+
+    pub fn set_is_truncated(&mut self) {
+        self.0 |= 0x0200
     }
 
     pub fn recursion_desired(&self) -> bool {
         self.0 & 0x0100 > 0
     }
 
+    pub fn set_recursion_desired(&mut self) {
+        self.0 |= 0x0100
+    }
+
     pub fn recursion_available(&self) -> bool {
         self.0 & 0x0080 > 0
+    }
+
+    pub fn set_recursion_available(&mut self) {
+        self.0 |= 0x0080
     }
 
     pub fn response_code(&self) -> DnsResponseCode {
@@ -303,6 +422,22 @@ impl DnsHeaderFlags {
             code @ 6..=15 => DnsResponseCode::Reserved(code as u8),
             _ => unreachable!("response code should have the value in range 0..=15"),
         }
+    }
+    pub fn set_response_code(&mut self, response_code: DnsResponseCode) {
+        let code = match response_code {
+            DnsResponseCode::NoError => 0,
+            DnsResponseCode::FormatError => 1,
+            DnsResponseCode::ServerFailure => 2,
+            DnsResponseCode::NameError => 3,
+            DnsResponseCode::NotImplemented => 4,
+            DnsResponseCode::Refused => 5,
+            DnsResponseCode::Reserved(code @ 6..=15) => code as u16,
+            DnsResponseCode::Reserved(_) => {
+                panic!("reserved response code should have the value in range 6..=15")
+            }
+        };
+
+        self.0 |= code;
     }
 
     /// Returns the abbreviated names of the flags that are set (the flag bit is one).
