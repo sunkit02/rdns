@@ -13,39 +13,15 @@ use rdns::{view::View, DecodeBinary, DnsPacket, DnsQtype, DnsQuery, EncodeBinary
 const APP_NAME: &str = "rdns";
 const GOOGLE_DNS: (&str, Option<&str>) = ("8.8.8.8", None);
 const A_ROOT_SERVER: (&str, Option<&str>) = ("198.41.0.4", Some("a.root-servers.net")); // a.root-servers.net
+const DEFAULT_SERVER_ADDR: &str = A_ROOT_SERVER.0;
 
 fn main() -> Result<()> {
-    let default_server_addr = A_ROOT_SERVER.0;
+    let args = parse_cli_args()?;
+    let server_addr = args.server_addr.clone();
 
-    let CliArgs {
-        server_addr,
-        domain,
-    } = parse_cli_args()?;
+    let (response, message_size, query_time, tcp_used) = run_dns_resolver(args)?;
 
-    let server_addr = server_addr.unwrap_or(default_server_addr.to_owned());
-
-    let socket = UdpSocket::bind("0.0.0.0:6679").unwrap();
-
-    let query = DnsQuery::builder()
-        .domain(domain)
-        .type_(DnsQtype::A)
-        .build();
-
-    let query_start_time = Instant::now();
-
-    let mut tcp_used = false;
-    let (response, message_size) = match lookup_domain_udp(&query, &server_addr, &socket) {
-        Ok(response) => response,
-        Err(_) => {
-            tcp_used = true;
-            let mut stream = TcpStream::connect((server_addr.clone(), 53)).unwrap();
-            lookup_domain_tcp(&query, &mut stream)
-        }
-    };
-
-    let query_time = query_start_time.elapsed();
     let time = Local::now();
-
     pretty_print_response(&response);
     println!();
 
@@ -63,22 +39,47 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+fn run_dns_resolver(args: CliArgs) -> Result<(DnsPacket, usize, Duration, bool)> {
+    let socket = UdpSocket::bind("0.0.0.0:6679").unwrap();
+
+    let query = DnsQuery::builder()
+        .domain(args.domain)
+        .type_(DnsQtype::A)
+        .build();
+
+    let query_start_time = Instant::now();
+
+    let mut tcp_used = false;
+    let (response, message_size) = match lookup_domain_udp(&query, &args.server_addr, &socket) {
+        Ok(response) => response,
+        Err(_) => {
+            tcp_used = true;
+            let mut stream = TcpStream::connect((args.server_addr, 53)).unwrap();
+            lookup_domain_tcp(&query, &mut stream)
+        }
+    };
+
+    let query_time = query_start_time.elapsed();
+
+    Ok((response, message_size, query_time, tcp_used))
+}
+
 struct CliArgs {
-    server_addr: Option<String>,
+    server_addr: String,
     domain: String,
 }
 
 fn parse_cli_args() -> Result<CliArgs> {
     let mut args = env::args().collect::<Vec<String>>();
 
-    let mut server_ip = None;
+    let mut server_addr = None;
     let mut domain = None;
 
     match args.len() {
         1 => return Err(anyhow!(get_usage_string())),
         2 => {
             if args[1].starts_with('@') {
-                server_ip = Some(args[1].clone());
+                server_addr = Some(args[1].clone());
             } else {
                 domain = Some(args[1].clone());
             }
@@ -95,7 +96,7 @@ fn parse_cli_args() -> Result<CliArgs> {
             // Drop the '@' in front of the server ip
             args[1].remove(0);
 
-            server_ip = Some(args[1].clone());
+            server_addr = Some(args[1].clone());
             domain = Some(args[2].clone());
         }
         _ => return Err(anyhow!(get_usage_string())),
@@ -105,9 +106,10 @@ fn parse_cli_args() -> Result<CliArgs> {
         "Please enter a domain to query.\n{}",
         get_usage_string()
     ))?;
+    let server_addr = server_addr.unwrap_or(DEFAULT_SERVER_ADDR.to_owned());
 
     Ok(CliArgs {
-        server_addr: server_ip,
+        server_addr,
         domain,
     })
 }
