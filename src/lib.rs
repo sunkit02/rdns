@@ -5,10 +5,6 @@ use view::View;
 
 pub mod view;
 
-pub const TYPE_A: u16 = 1;
-pub const CLASS_IN: u16 = 1;
-pub const RECURSION_DESIRED: u16 = 1 << 8;
-
 pub trait EncodeBinary {
     fn encode(&self) -> Vec<u8>;
 }
