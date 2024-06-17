@@ -36,7 +36,6 @@ fn main() -> Result<()> {
     let time = Local::now();
 
     pretty_print_response(&response);
-    println!();
 
     // TODO: dynamically query the server name or server ip to be displayed in the footer
     print_footer(

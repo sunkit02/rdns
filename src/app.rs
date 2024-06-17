@@ -84,8 +84,9 @@ pub fn resolve(
                     } => Some(server),
                     _ => None,
                 })
+                .take(1) // Only query one name server
                 .map(|server_name| {
-                    println!(
+                    eprintln!(
                         "Querying '{}' for name server '{}'",
                         server_addr, server_name
                     );
@@ -109,7 +110,10 @@ pub fn resolve(
                 .collect::<Vec<String>>()
         };
 
-        let (response, message_size, tcp_used) = resolve(&ns_ipv4s[0], query, socket);
+        let ns_ip = &ns_ipv4s
+            .get(0)
+            .expect("Failed to find ip address for name server.");
+        let (response, message_size, tcp_used) = resolve(ns_ip, query, socket);
 
         (response, message_size, tcp_used)
     } else {

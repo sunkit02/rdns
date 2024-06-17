@@ -4,6 +4,8 @@ use rdns::DnsPacket;
 use std::time::Duration;
 
 pub fn pretty_print_response(packet: &DnsPacket) {
+    println!();
+
     let opcode = packet.header.flags.opcode().to_string();
     let status = packet
         .header
@@ -91,6 +93,8 @@ pub fn pretty_print_response(packet: &DnsPacket) {
             );
         }
     }
+
+    println!();
 }
 
 const MONTHS: [&str; 12] = [
