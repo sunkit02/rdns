@@ -26,15 +26,20 @@ fn main() -> Result<()> {
 
     let socket = UdpSocket::bind("0.0.0.0:6679").unwrap();
 
+    let query = DnsQuery::builder()
+        .domain(domain)
+        .type_(DnsQtype::A)
+        .build();
+
     let query_start_time = Instant::now();
 
     let mut tcp_used = false;
-    let (response, message_size) = match lookup_domain_udp(&domain, &server_addr, &socket) {
+    let (response, message_size) = match lookup_domain_udp(&query, &server_addr, &socket) {
         Ok(response) => response,
         Err(_) => {
             tcp_used = true;
             let mut stream = TcpStream::connect((server_addr.clone(), 53)).unwrap();
-            lookup_domain_tcp(&domain, &mut stream)
+            lookup_domain_tcp(&query, &mut stream)
         }
     };
 
@@ -107,12 +112,8 @@ fn parse_cli_args() -> Result<CliArgs> {
     })
 }
 
-fn lookup_domain_tcp(domain_name: &str, stream: &mut TcpStream) -> (DnsPacket, usize) {
-    let query = DnsQuery::builder()
-        .domain(domain_name.to_owned())
-        .type_(DnsQtype::A)
-        .build()
-        .encode();
+fn lookup_domain_tcp(query: &DnsQuery, stream: &mut TcpStream) -> (DnsPacket, usize) {
+    let query = query.encode();
 
     let query_len = (query.len() as u16).to_be_bytes();
     let mut bytes = query_len.to_vec();
@@ -133,17 +134,12 @@ fn lookup_domain_tcp(domain_name: &str, stream: &mut TcpStream) -> (DnsPacket, u
     (packet, received)
 }
 
-// TODO: Extract query building from lookup_domain_udp and tcp
 fn lookup_domain_udp(
-    domain_name: &str,
+    query: &DnsQuery,
     dns_server: &str,
     socket: &UdpSocket,
 ) -> Result<(DnsPacket, usize), ()> {
-    let query = DnsQuery::builder()
-        .domain(domain_name.to_owned())
-        .type_(DnsQtype::A)
-        .build()
-        .encode();
+    let query = query.encode();
 
     let sent = socket.send_to(query.as_slice(), (dns_server, 53)).unwrap();
     assert_eq!(
