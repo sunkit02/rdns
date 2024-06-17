@@ -8,7 +8,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rdns::{view::View, DecodeBinary, DnsPacket, DnsQtype, DnsQuery, EncodeBinary};
+use rdns::{
+    view::View, DecodeBinary, DnsPacket, DnsQtype, DnsQuery, DnsRecord, DnsRecordData, DnsType,
+    EncodeBinary,
+};
 
 const APP_NAME: &str = "rdns";
 const GOOGLE_DNS: (&str, Option<&str>) = ("8.8.8.8", None);
@@ -19,9 +22,22 @@ fn main() -> Result<()> {
     let args = parse_cli_args()?;
     let server_addr = args.server_addr.clone();
 
-    let (response, message_size, query_time, tcp_used) = run_dns_resolver(args)?;
+    // let (response, message_size, query_time, tcp_used) = run_dns_resolver(args)?;
+
+    let start_query = Instant::now();
+    let socket = UdpSocket::bind("0.0.0.0:6679").unwrap();
+    let (response, message_size, tcp_used) = resolve(
+        &server_addr,
+        &DnsQuery::builder()
+            .type_(DnsQtype::A)
+            .domain(args.domain)
+            .build(),
+        &socket,
+    );
+    let query_time = start_query.elapsed();
 
     let time = Local::now();
+
     pretty_print_response(&response);
     println!();
 
@@ -112,6 +128,83 @@ fn parse_cli_args() -> Result<CliArgs> {
         server_addr,
         domain,
     })
+}
+
+/// Resolves a domain name through resursively querying if needed
+fn resolve(server_addr: &str, query: &DnsQuery, socket: &UdpSocket) -> (DnsPacket, usize, bool) {
+    println!("Querying '{}' for '{}'", server_addr, query.question.name);
+
+    let mut tcp_used = false;
+    let (response, message_size) = match lookup_domain_udp(&query, &server_addr, &socket) {
+        Ok(response) => response,
+        Err(_) => {
+            tcp_used = true;
+            let mut stream = TcpStream::connect((server_addr, 53)).unwrap();
+            lookup_domain_tcp(&query, &mut stream)
+        }
+    };
+
+    if response.is_terminal_response() {
+        (response, message_size, tcp_used)
+    } else if response.points_to_ns() {
+        let ns_ipv4s = if response.additionals.len() >= 1 {
+            response
+                .additionals
+                .iter()
+                .filter_map(|record| match record {
+                    DnsRecord {
+                        type_: DnsType::A,
+                        data: DnsRecordData::Ipv4Addr(ip),
+                        ..
+                    } => Some(ip),
+                    _ => None,
+                })
+                .cloned()
+                .collect::<Vec<String>>()
+        } else {
+            // no additional records attached, query for name server ip using domain
+            response
+                .authorities
+                .iter()
+                .filter_map(|record| match record {
+                    DnsRecord {
+                        type_: DnsType::NS,
+                        data: DnsRecordData::NameServer(server),
+                        ..
+                    } => Some(server),
+                    _ => None,
+                })
+                .map(|server_name| {
+                    println!(
+                        "Querying '{}' for name server '{}'",
+                        server_addr, server_name
+                    );
+                    let query = DnsQuery::builder()
+                        .type_(DnsQtype::A)
+                        .recursion_desired()
+                        .domain(server_name.to_owned())
+                        .build();
+                    let (response, _, _) = resolve(server_addr, &query, socket);
+                    response.answers.into_iter()
+                })
+                .flatten()
+                .filter_map(|record| match record {
+                    DnsRecord {
+                        type_: DnsType::A,
+                        data: DnsRecordData::Ipv4Addr(ip),
+                        ..
+                    } => Some(ip),
+                    _ => None,
+                })
+                .collect::<Vec<String>>()
+        };
+
+        let (response, message_size, tcp_used) = resolve(&ns_ipv4s[0], query, socket);
+
+        (response, message_size, tcp_used)
+    } else {
+        panic!("Something went horribliy wrong.");
+    }
 }
 
 fn lookup_domain_tcp(query: &DnsQuery, stream: &mut TcpStream) -> (DnsPacket, usize) {

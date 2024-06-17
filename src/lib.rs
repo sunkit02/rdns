@@ -141,6 +141,23 @@ pub struct DnsPacket {
     pub additionals: Vec<DnsRecord>,
 }
 
+impl DnsPacket {
+    /// Checks if the response contains a valid address. (aka ANSWER containing record(s) of type A)
+    #[inline]
+    pub fn is_terminal_response(&self) -> bool {
+        self.answers
+            .iter()
+            .any(|record| matches!(record.type_, DnsType::A))
+    }
+
+    #[inline]
+    pub fn points_to_ns(&self) -> bool {
+        self.authorities
+            .iter()
+            .any(|record| matches!(record.type_, DnsType::NS))
+    }
+}
+
 impl DecodeBinary for DnsPacket {
     fn decode(bytes: &mut View) -> Self {
         let header = DnsHeader::decode(bytes);
@@ -173,6 +190,7 @@ impl DecodeBinary for DnsPacket {
 
 /// The header contains the following fields:
 ///
+/// ```diagram
 ///                                 1  1  1  1  1  1
 ///   0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
 /// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
@@ -188,6 +206,7 @@ impl DecodeBinary for DnsPacket {
 /// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
 /// |                    ARCOUNT                    |
 /// +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+/// ```
 ///
 ///
 /// **ID**
@@ -222,9 +241,11 @@ pub struct DnsHeader {
 
 /// The flags section of a DNS header
 ///
+/// ```diagram
 ///     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
 ///     |QR|   Opcode  |AA|TC|RD|RA|   Z    |   RCODE   |
 ///     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+/// ```
 ///
 ///
 /// **QR**
@@ -235,6 +256,7 @@ pub struct DnsHeader {
 /// A four bit field that specifies kind of query in this message.  This value is set by the
 /// originator of a query and copied into the response.  The values are:
 ///
+/// ```diagram
 ///                 0               a standard query (QUERY)
 ///
 ///                 1               an inverse query (IQUERY)
@@ -242,6 +264,7 @@ pub struct DnsHeader {
 ///                 2               a server status request (STATUS)
 ///
 ///                 3-15            reserved for future use
+/// ```
 ///
 /// **AA**
 /// Authoritative Answer - this bit is valid in responses, and specifies that the responding name
@@ -271,6 +294,7 @@ pub struct DnsHeader {
 /// Response code - this 4 bit field is set as part of responses.  The values have the following
 /// interpretation:
 ///
+/// ```diagram
 ///                 0               No error condition
 ///
 ///                 1               Format error - The name server was unable to interpret the
@@ -291,7 +315,7 @@ pub struct DnsHeader {
 ///                                 not wish to provide the information to the particular
 ///                                 requester, or a name server may not wish to perform a
 ///                                 particular operation (e.g., zone
-///
+/// ```
 ///
 #[derive(Debug, Copy, Clone, PartialEq, Default)]
 #[repr(transparent)]
