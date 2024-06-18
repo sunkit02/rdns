@@ -143,7 +143,7 @@ impl DnsPacket {
     pub fn is_terminal_response(&self) -> bool {
         self.answers
             .iter()
-            .any(|record| matches!(record.type_, DnsType::A))
+            .any(|record| matches!(record.type_, DnsType::A | DnsType::CNAME))
     }
 
     #[inline]
@@ -623,6 +623,9 @@ impl DecodeBinary for DnsRecord {
         let data = match type_ {
             DnsType::A => DnsRecordData::Ipv4Addr(ipv4_to_string(view.read_n_bytes(data_len))),
             DnsType::AAAA => DnsRecordData::Ipv6Addr(ipv6_to_string(view.read_n_bytes(data_len))),
+            DnsType::CNAME => {
+                DnsRecordData::Cname(String::from_utf8_lossy(&decode_dns_name(view)).to_string())
+            }
             DnsType::NS => {
                 let name_bytes = decode_dns_name(view);
                 let name = String::from_utf8_lossy(&name_bytes).to_string();
@@ -666,6 +669,7 @@ impl DecodeBinary for DnsRecord {
 pub enum DnsRecordData {
     Ipv4Addr(String),
     Ipv6Addr(String),
+    Cname(String),
     NameServer(String),
     StartOfAuthority {
         mname: String,
@@ -686,6 +690,7 @@ impl Display for DnsRecordData {
         match self {
             DnsRecordData::Ipv4Addr(addr) => write!(f, "{addr}"),
             DnsRecordData::Ipv6Addr(addr) => write!(f, "{addr}"),
+            DnsRecordData::Cname(name) => write!(f, "{name}"),
             DnsRecordData::NameServer(name) => write!(f, "{name}"),
             DnsRecordData::StartOfAuthority {
                 mname,
