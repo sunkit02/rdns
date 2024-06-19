@@ -1,4 +1,7 @@
-use std::{net::UdpSocket, time::Instant};
+use std::{
+    net::UdpSocket,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use chrono::prelude::*;
@@ -23,19 +26,30 @@ fn main() -> Result<()> {
 
     let start_query = Instant::now();
     let socket = UdpSocket::bind("0.0.0.0:6679").unwrap();
-    let (response, message_size, tcp_used) = app::resolve(
-        &server_addr,
+    socket
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    socket
+        .set_write_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+
+    let responses = app::resolve(
+        &[server_addr.clone()],
         &DnsQuery::builder()
             .type_(DnsQtype::A)
-            .domain(args.domain)
+            .domain(args.domain.clone())
             .build(),
         &socket,
-    );
+        false,
+    )?;
+
     let query_time = start_query.elapsed();
 
     let time = Local::now();
 
-    pretty_print_response(&response);
+    let (ref response, message_size, tcp_used) = responses[0];
+
+    pretty_print_response(response);
 
     // TODO: dynamically query the server name or server ip to be displayed in the footer
     print_footer(
