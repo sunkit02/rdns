@@ -4,14 +4,14 @@ use std::{
 };
 
 use anyhow::Result;
+use app::{
+    cli::parse_cli_args,
+    print::{pretty_print_response, print_footer},
+};
 use chrono::prelude::*;
-use cli::parse_cli_args;
-use print::{pretty_print_response, print_footer};
 use rdns::{DnsQtype, DnsQuery};
 
 mod app;
-mod cli;
-mod print;
 
 const APP_NAME: &str = "rdns";
 const GOOGLE_DNS: (&str, Option<&str>) = ("8.8.8.8", None);

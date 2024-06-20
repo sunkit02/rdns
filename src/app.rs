@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::cli::CliArgs;
+use cli::CliArgs;
 use error::{DnsError, NetworkError};
 use rdns::{
     view::View, DecodeBinary, DnsPacket, DnsQtype, DnsQuery, DnsRecord, DnsRecordData, EncodeBinary,
@@ -12,7 +12,9 @@ use rdns::{
 
 use crate::app::error::Result;
 
+pub mod cli;
 pub mod error;
+pub mod print;
 
 pub fn run_dns_resolver(args: CliArgs) -> Result<(DnsPacket, usize, Duration, bool)> {
     let socket = UdpSocket::bind("0.0.0.0:6679").expect("failed to establish connection");
